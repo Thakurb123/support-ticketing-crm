@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Support Ticketing CRM</title>
+    <?!= include('Styles'); ?>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Customer Support</p>
+          <h1>Ticketing CRM</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost" id="exportBtn">Export CSV</button>
+          <button class="primary" id="newTicketBtn">New Ticket</button>
+        </div>
+      </header>
+
+      <section class="filters">
+        <input id="searchInput" type="search" placeholder="Search ticket, customer, order, phone, email">
+        <select id="viewMode">
+          <option value="all">All tickets</option>
+          <option value="active">Active tickets only</option>
+          <option value="team">My team bucket</option>
+        </select>
+        <select id="statusFilter"><option value="">All statuses</option></select>
+        <select id="channelFilter"><option value="">All channels</option></select>
+        <select id="escalationFilter"><option value="">All escalation levels</option></select>
+        <input id="fromDate" type="date">
+        <input id="toDate" type="date">
+      </section>
+
+      <main class="crm-grid">
+        <aside class="ticket-list" id="ticketList"></aside>
+
+        <section class="ticket-detail" id="ticketDetail">
+          <div class="empty-state">
+            <h2>Select a ticket</h2>
+            <p>Ticket details, linked order data, notes, and escalation actions will appear here.</p>
+          </div>
+        </section>
+
+        <aside class="insights">
+          <div class="metric-grid">
+            <article><span id="metricTotal">0</span><p>Total</p></article>
+            <article><span id="metricActive">0</span><p>Active</p></article>
+            <article><span id="metricResolved">0</span><p>Resolved</p></article>
+            <article><span id="metricCritical">0</span><p>Critical</p></article>
+          </div>
+          <div class="panel-block">
+            <h2>Team Buckets</h2>
+            <div id="teamBuckets"></div>
+          </div>
+          <div class="panel-block">
+            <h2>Selected Ticket Insights</h2>
+            <div id="selectedInsights" class="muted">No ticket selected.</div>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <div class="modal-backdrop hidden" id="ticketModal">
+      <form class="modal" id="ticketForm">
+        <div class="modal-head">
+          <h2>Create Ticket</h2>
+          <button type="button" class="icon-btn" id="closeModalBtn">x</button>
+        </div>
+        <div class="form-grid">
+          <label>Customer name<input name="CustomerName" required></label>
+          <label>Email<input name="Email" type="email" required></label>
+          <label>Phone<input name="Phone" required></label>
+          <label>Order ID<input name="OrderID"></label>
+          <label>Channel<select name="Channel" id="formChannel" required></select></label>
+          <label>Status<select name="Status" id="formStatus"></select></label>
+          <label>Assigned to<input name="AssignedTo"></label>
+          <label>Department<input name="Department"></label>
+          <label>Query theme<input name="QueryTheme"></label>
+          <label>Due date<input name="DueDate" type="date"></label>
+          <label class="span-2">Issue description<textarea name="IssueDescription" required></textarea></label>
+          <label class="span-2">Initial message<textarea name="InitialMessage"></textarea></label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="cancelBtn">Cancel</button>
+          <button class="primary" type="submit">Create Ticket</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+    <div id="loader" class="loader hidden">Loading...</div>
+    <?!= include('JavaScript'); ?>
+  </body>
+</html>
