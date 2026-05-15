@@ -1,0 +1,347 @@
+<script>
+  const state = {
+    tickets: [],
+    selectedTicketId: null,
+    team: [],
+    statuses: [],
+    channels: [],
+    escalationLevels: [],
+    filters: {}
+  };
+
+  const $ = (selector) => document.querySelector(selector);
+  const listEl = $('#ticketList');
+  const detailEl = $('#ticketDetail');
+
+  document.addEventListener('DOMContentLoaded', () => {
+    bindEvents();
+    loadData();
+  });
+
+  function bindEvents() {
+    $('#newTicketBtn').addEventListener('click', () => $('#ticketModal').classList.remove('hidden'));
+    $('#closeModalBtn').addEventListener('click', closeModal);
+    $('#cancelBtn').addEventListener('click', closeModal);
+    $('#ticketForm').addEventListener('submit', createTicket);
+    $('#exportBtn').addEventListener('click', exportCsv);
+    ['searchInput', 'viewMode', 'statusFilter', 'channelFilter', 'escalationFilter', 'fromDate', 'toDate']
+      .forEach((id) => $(`#${id}`).addEventListener('input', debounce(applyFilters, 250)));
+  }
+
+  function loadData(filters = {}) {
+    showLoader(true);
+    google.script.run
+      .withSuccessHandler((response) => {
+        showLoader(false);
+        if (!response.ok) return toast(response.message);
+        state.tickets = response.tickets;
+        state.team = response.team;
+        state.statuses = response.statuses;
+        state.channels = response.channels;
+        state.escalationLevels = response.escalationLevels;
+        fillDropdowns();
+        renderTickets();
+        renderMetrics(response.metrics);
+        renderTeamBuckets();
+        renderSelectedTicket();
+      })
+      .withFailureHandler((error) => {
+        showLoader(false);
+        toast(error.message || error);
+      })
+      .getInitialData(filters);
+  }
+
+  function fillDropdowns() {
+    fillSelect($('#statusFilter'), state.statuses, 'All statuses');
+    fillSelect($('#channelFilter'), state.channels, 'All channels');
+    fillSelect($('#escalationFilter'), state.escalationLevels, 'All escalation levels');
+    fillSelect($('#formStatus'), state.statuses);
+    fillSelect($('#formChannel'), state.channels);
+  }
+
+  function fillSelect(select, values, placeholder) {
+    const current = select.value;
+    select.innerHTML = placeholder ? `<option value="">${placeholder}</option>` : '';
+    values.forEach((value) => select.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`));
+    if ([...select.options].some((option) => option.value === current)) select.value = current;
+  }
+
+  function applyFilters() {
+    const mode = $('#viewMode').value;
+    state.filters = {
+      search: $('#searchInput').value,
+      status: $('#statusFilter').value,
+      channel: $('#channelFilter').value,
+      escalation: $('#escalationFilter').value,
+      fromDate: $('#fromDate').value,
+      toDate: $('#toDate').value,
+      activeOnly: mode === 'active',
+      assignedTo: mode === 'team' ? 'Priya Sharma' : ''
+    };
+    loadData(state.filters);
+  }
+
+  function renderTickets() {
+    if (!state.tickets.length) {
+      listEl.innerHTML = '<div class="empty-state"><p>No tickets match the current filters.</p></div>';
+      return;
+    }
+    listEl.innerHTML = state.tickets.map((ticket) => `
+      <button class="ticket-card ${ticket.TicketID === state.selectedTicketId ? 'active' : ''}" onclick="selectTicket('${ticket.TicketID}')">
+        <div class="row">
+          <strong>${escapeHtml(ticket.TicketID)}</strong>
+          <span class="badge ${statusClass(ticket.Status)}">${escapeHtml(ticket.Status)}</span>
+        </div>
+        <div>${escapeHtml(ticket.CustomerName)}</div>
+        <div class="ticket-meta">
+          <span>${escapeHtml(ticket.Channel)} / ${escapeHtml(ticket.QueryTheme || 'General')}</span>
+          <span>${formatDate(ticket.UpdatedAt)}</span>
+        </div>
+      </button>
+    `).join('');
+  }
+
+  function selectTicket(ticketId) {
+    state.selectedTicketId = ticketId;
+    renderTickets();
+    renderSelectedTicket();
+  }
+
+  function renderSelectedTicket() {
+    const ticket = state.tickets.find((item) => item.TicketID === state.selectedTicketId);
+    if (!ticket) {
+      detailEl.innerHTML = '<div class="empty-state"><h2>Select a ticket</h2><p>Ticket details, linked order data, notes, and escalation actions will appear here.</p></div>';
+      $('#selectedInsights').textContent = 'No ticket selected.';
+      return;
+    }
+    detailEl.innerHTML = `
+      <div class="detail-head">
+        <div>
+          <h2>${escapeHtml(ticket.TicketID)} / ${escapeHtml(ticket.CustomerName)}</h2>
+          <p class="muted">Created ${formatDate(ticket.CreatedAt)} / Updated ${formatDate(ticket.UpdatedAt)}</p>
+        </div>
+        <div>
+          <span class="badge ${statusClass(ticket.Status)}">${escapeHtml(ticket.Status)}</span>
+          <span class="badge ${levelClass(ticket.EscalationLevel)}">${escapeHtml(ticket.EscalationLevel)}</span>
+        </div>
+      </div>
+      <form id="editForm" class="edit-grid">
+        ${inputField('CustomerName', 'Customer name', ticket.CustomerName)}
+        ${inputField('Email', 'Email', ticket.Email)}
+        ${inputField('Phone', 'Phone', ticket.Phone)}
+        ${inputField('OrderID', 'Order ID', ticket.OrderID)}
+        ${selectField('Status', 'Status', state.statuses, ticket.Status)}
+        ${selectField('Channel', 'Channel', state.channels, ticket.Channel)}
+        ${selectField('EscalationLevel', 'Escalation', state.escalationLevels, ticket.EscalationLevel)}
+        ${inputField('AssignedTo', 'Assigned to', ticket.AssignedTo)}
+        ${inputField('Department', 'Department', ticket.Department)}
+        ${inputField('QueryTheme', 'Query theme', ticket.QueryTheme)}
+        ${textareaField('IssueDescription', 'Issue description', ticket.IssueDescription, true)}
+        ${textareaField('ActionTaken', 'Action taken', ticket.ActionTaken, true)}
+        ${textareaField('ResolutionNotes', 'Resolution notes', ticket.ResolutionNotes, true)}
+      </form>
+      <div class="detail-actions">
+        <button class="primary" onclick="saveTicket()">Save Changes</button>
+        <button class="ghost" onclick="quickResolve()">Mark Resolved</button>
+        <button class="ghost" onclick="escalateTicket()">Escalate</button>
+      </div>
+      ${renderOrder(ticket.Order)}
+      ${renderTimeline(ticket)}
+    `;
+    $('#selectedInsights').innerHTML = `
+      <p><strong>Channel:</strong> ${escapeHtml(ticket.Channel)}</p>
+      <p><strong>Assigned:</strong> ${escapeHtml(ticket.AssignedTo || 'Unassigned')}</p>
+      <p><strong>Transcripts:</strong> ${ticket.Transcripts.length}</p>
+      <p><strong>Attachments:</strong> ${ticket.Attachments.length}</p>
+    `;
+  }
+
+  function renderOrder(order) {
+    if (!order) return '<div class="field wide"><span>Linked order</span>No matching order found.</div>';
+    return `
+      <div class="detail-grid" style="margin-top:16px">
+        <div class="field"><span>Product</span>${escapeHtml(order.Product)}</div>
+        <div class="field"><span>Amount</span>${escapeHtml(order.Amount)}</div>
+        <div class="field"><span>Payment</span>${escapeHtml(order.PaymentStatus)}</div>
+        <div class="field"><span>Fulfillment</span>${escapeHtml(order.FulfillmentStatus)}</div>
+      </div>
+    `;
+  }
+
+  function renderTimeline(ticket) {
+    const transcripts = ticket.Transcripts.map((item) => `<p><strong>${escapeHtml(item.MessageFrom)}:</strong> ${escapeHtml(item.MessageText)}</p>`).join('');
+    const history = ticket.EscalationHistory.map((item) => `<p>${formatDate(item.Timestamp)} / ${escapeHtml(item.FromAssignee)} to ${escapeHtml(item.ToAssignee)} / ${escapeHtml(item.Reason)}</p>`).join('');
+    return `
+      <div class="panel-block">
+        <h3>Conversation</h3>
+        <div class="muted">${transcripts || 'No transcript yet.'}</div>
+      </div>
+      <div class="panel-block">
+        <h3>Escalation History</h3>
+        <div class="muted">${history || 'No escalations yet.'}</div>
+      </div>
+    `;
+  }
+
+  function renderMetrics(metrics) {
+    $('#metricTotal').textContent = metrics.total;
+    $('#metricActive').textContent = metrics.active;
+    $('#metricResolved').textContent = metrics.resolved;
+    $('#metricCritical').textContent = metrics.critical;
+  }
+
+  function renderTeamBuckets() {
+    const buckets = state.tickets.reduce((map, ticket) => {
+      const key = ticket.AssignedTo || 'Unassigned';
+      map[key] = (map[key] || 0) + 1;
+      return map;
+    }, {});
+    $('#teamBuckets').innerHTML = Object.keys(buckets).map((name) => `
+      <div class="bucket"><span>${escapeHtml(name)}</span><strong>${buckets[name]}</strong></div>
+    `).join('') || '<p class="muted">No team data.</p>';
+  }
+
+  function createTicket(event) {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(event.target).entries());
+    showLoader(true);
+    google.script.run
+      .withSuccessHandler((response) => {
+        showLoader(false);
+        if (!response.ok) return toast(response.message);
+        closeModal();
+        state.selectedTicketId = response.ticket.TicketID;
+        toast('Ticket created successfully.');
+        loadData(state.filters);
+      })
+      .withFailureHandler((error) => {
+        showLoader(false);
+        toast(error.message || error);
+      })
+      .createTicket(payload);
+  }
+
+  function saveTicket() {
+    const ticketId = state.selectedTicketId;
+    const payload = Object.fromEntries(new FormData($('#editForm')).entries());
+    showLoader(true);
+    google.script.run
+      .withSuccessHandler((response) => {
+        showLoader(false);
+        if (!response.ok) return toast(response.message);
+        toast('Ticket updated.');
+        loadData(state.filters);
+      })
+      .withFailureHandler((error) => {
+        showLoader(false);
+        toast(error.message || error);
+      })
+      .updateTicket(ticketId, payload);
+  }
+
+  function quickResolve() {
+    $('#editForm [name="Status"]').value = 'Resolved';
+    saveTicket();
+  }
+
+  function escalateTicket() {
+    const ticket = state.tickets.find((item) => item.TicketID === state.selectedTicketId);
+    const toAssignee = prompt('Escalate to team member:', ticket.AssignedTo || 'Arjun Rao');
+    if (!toAssignee) return;
+    const reason = prompt('Reason for escalation:', 'Needs specialist review') || '';
+    showLoader(true);
+    google.script.run
+      .withSuccessHandler((response) => {
+        showLoader(false);
+        if (!response.ok) return toast(response.message);
+        toast('Ticket escalated.');
+        loadData(state.filters);
+      })
+      .withFailureHandler((error) => {
+        showLoader(false);
+        toast(error.message || error);
+      })
+      .addEscalation({
+        TicketID: state.selectedTicketId,
+        ToAssignee: toAssignee,
+        Department: ticket.Department || 'Support',
+        Level: ticket.EscalationLevel === 'Critical' ? 'Critical' : 'L2',
+        Reason: reason
+      });
+  }
+
+  function exportCsv() {
+    google.script.run
+      .withSuccessHandler((csv) => {
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'support-tickets.csv';
+        link.click();
+        URL.revokeObjectURL(url);
+      })
+      .exportTicketsCsv(state.filters);
+  }
+
+  function closeModal() {
+    $('#ticketModal').classList.add('hidden');
+    $('#ticketForm').reset();
+  }
+
+  function inputField(name, label, value) {
+    return `<label>${label}<input name="${name}" value="${escapeHtml(value || '')}"></label>`;
+  }
+
+  function textareaField(name, label, value, wide) {
+    return `<label class="${wide ? 'span-2' : ''}">${label}<textarea name="${name}">${escapeHtml(value || '')}</textarea></label>`;
+  }
+
+  function selectField(name, label, options, value) {
+    return `<label>${label}<select name="${name}">${options.map((option) => `
+      <option value="${escapeHtml(option)}" ${option === value ? 'selected' : ''}>${escapeHtml(option)}</option>
+    `).join('')}</select></label>`;
+  }
+
+  function statusClass(status) {
+    return `status-${String(status || '').toLowerCase().replaceAll(' ', '-')}`;
+  }
+
+  function levelClass(level) {
+    return `level-${String(level || 'none').toLowerCase()}`;
+  }
+
+  function formatDate(value) {
+    if (!value) return '';
+    return new Date(value).toLocaleString();
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  function showLoader(show) {
+    $('#loader').classList.toggle('hidden', !show);
+  }
+
+  function toast(message) {
+    const toastEl = $('#toast');
+    toastEl.textContent = message;
+    toastEl.classList.remove('hidden');
+    setTimeout(() => toastEl.classList.add('hidden'), 3200);
+  }
+
+  function debounce(fn, delay) {
+    let timer;
+    return (...args) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), delay);
+    };
+  }
+</script>
